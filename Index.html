@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fahr-Tracker mit Verlauf und Timer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        #map {
+            height: 60vh;
+            width: 100%;
+        }
+        #controls {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        #timer {
+            font-size: 20px;
+            margin-right: 10px;
+        }
+        #history {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <h1>Dein Standort während der Fahrt (mit Verlauf und Timer)</h1>
+    <div id="map"></div>
+
+    <div id="controls">
+        <div id="timer">Zeit: 00:00:00</div>
+        <button id="start">Start</button>
+        <button id="stop" disabled>Stop</button>
+    </div>
+
+    <div id="history">
+        <h2>Fahrtenverlauf</h2>
+        <ul id="historyList"></ul>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script>
+        let map, marker, path = [], tracking = false, watchID = null;
+        let startTime, timerInterval, stopTime;
+
+        function initMap() {
+            const defaultPosition = [52.52, 13.405]; // Berlin Koordinaten
+            map = L.map('map').setView(defaultPosition, 15);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+
+            marker = L.marker(defaultPosition).addTo(map).bindPopup('Dein Standort').openPopup();
+
+            loadHistory(); // Lade gespeicherten Verlauf beim Start
+        }
+
+        // Start der Fahrt
+        function startTracking() {
+            tracking = true;
+            document.getElementById('start').disabled = true;
+            document.getElementById('stop').disabled = false;
+
+            startTime = new Date(); // Startzeit speichern
+            startTimer(); // Timer starten
+
+            path = []; // Reset Pfad für neue Fahrt
+
+            // Standort-Tracking aktivieren
+            if (navigator.geolocation) {
+                watchID = navigator.geolocation.watchPosition(updatePosition, showError, {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 60000
+                });
+            } else {
+                alert("Geolocation wird von diesem Browser nicht unterstützt.");
+            }
+        }
+
+        // Stop der Fahrt
+        function stopTracking() {
+            tracking = false;
+            document.getElementById('start').disabled = false;
+            document.getElementById('stop').disabled = true;
+
+            stopTime = new Date(); // Endzeit speichern
+            stopTimer(); // Timer stoppen
+
+            // Standort-Tracking deaktivieren
+            if (watchID !== null) {
+                navigator.geolocation.clearWatch(watchID);
+                watchID = null;
+            }
+
+            // Speichere die Fahrt in LocalStorage
+            saveRide();
+        }
+
+        // Timer starten
+        function startTimer() {
+            timerInterval = setInterval(() => {
+                const currentTime = new Date();
+                const elapsedTime = new Date(currentTime - startTime);
+                const hours = String(elapsedTime.getUTCHours()).padStart(2, '0');
+                const minutes = String(elapsedTime.getUTCMinutes()).padStart(2, '0');
+                const seconds = String(elapsedTime.getUTCSeconds()).padStart(2, '0');
+                document.getElementById('timer').textContent = `Zeit: ${hours}:${minutes}:${seconds}`;
+            }, 1000);
+        }
+
+        // Timer stoppen
+        function stopTimer() {
+            clearInterval(timerInterval);
+        }
+
+        // Aktualisierung des Standorts und Speicherung des Pfads
+        function updatePosition(position) {
+            if (!tracking) return; // Nur aktualisieren, wenn Tracking aktiv ist
+
+            const newPos = [position.coords.latitude, position.coords.longitude];
+            map.setView(newPos, 15);
+
+            marker.setLatLng(newPos).bindPopup('Dein aktueller Standort').openPopup();
+
+            path.push(newPos);
+            L.polyline(path, { color: 'blue' }).addTo(map);
+        }
+
+        // Fehlermeldungen bei Problemen mit Geolocation
+        function showError(error) {
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    alert("Benutzer hat die Standortabfrage abgelehnt.");
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    alert("Standortinformationen sind nicht verfügbar.");
+                    break;
+                case error.TIMEOUT:
+                    alert("Anfrage zum Abrufen des Standorts ist abgelaufen.");
+                    break;
+                case error.UNKNOWN_ERROR:
+                    alert("Ein unbekannter Fehler ist aufgetreten.");
+                    break;
+            }
+        }
+
+        // Speichern der Fahrt im LocalStorage
+        function saveRide() {
+            const rideData = {
+                startTime: startTime.toLocaleString(),
+                stopTime: stopTime.toLocaleString(),
+                path: path
+            };
+
+            // Lade bestehende Fahrten aus dem LocalStorage
+            const rides = JSON.parse(localStorage.getItem('rides')) || [];
+
+            // Füge die neue Fahrt hinzu
+            rides.push(rideData);
+
+            // Speichere die aktualisierte Liste wieder im LocalStorage
+            localStorage.setItem('rides', JSON.stringify(rides));
+
+            loadHistory(); // Aktualisiere den Verlauf auf der Seite
+        }
+
+        // Laden des Verlaufs aus LocalStorage
+        function loadHistory() {
+            const historyList = document.getElementById('historyList');
+            historyList.innerHTML = ''; // Leere die Liste zuerst
+
+            const rides = JSON.parse(localStorage.getItem('rides')) || [];
+
+            rides.forEach((ride, index) => {
+                const listItem = document.createElement('li');
+                listItem.textContent = `Fahrt ${index + 1}: Start: ${ride.startTime}, Stop: ${ride.stopTime}`;
+                historyList.appendChild(listItem);
+            });
+        }
+
+        // Event-Listener für Start und Stop
+        document.getElementById('start').addEventListener('click', startTracking);
+        document.getElementById('stop').addEventListener('click', stopTracking);
+
+        // Karte initialisieren, wenn das DOM geladen ist
+        window.onload = initMap;
+    </script>
+</body>
+</html>
